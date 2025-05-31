@@ -1,1 +1,1 @@
-# automte
+# automyte
