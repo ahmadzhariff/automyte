@@ -1,0 +1,89 @@
+name: Execute SQL Queries (Multi-Environment)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        type: choice
+        options:
+          - SIT
+          - PRE-PROD
+          - UAT
+          - PROD
+
+jobs:
+  run-sql:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    
+    env:
+      ORACLE_HOME: '/oracle/u01/db/19.26.0'  # Assuming this is fixed across environments
+      QUERY_1: 'RUN_SELECT.sql'
+      QUERY_2: 'RUN_NOW.sql'
+
+    steps:
+      - name: Checkout code
+        run: |
+          git clone https://${{ secrets.GIT_DHL_USER }}:${{ secrets.GIT_DHL_TOKEN }}@git.dhl.com/FCE/FLDB.git
+          cd FLDB
+          git checkout master
+
+      - name: Add SSH Host to Known Hosts
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Install SSH Key
+        uses: wev2017/ssh-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Run QUERY_1
+        env:
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.REMOTE_USER }}@${{ secrets.DB_HOST }} "
+            cat > /tmp/${{ env.QUERY_1 }}
+            export ORACLE_HOME=${{ env.ORACLE_HOME }}
+            ${{ env.ORACLE_HOME }}/bin/sqlplus -S \"$DB_USER/\\\"$DB_PASSWORD\\\"@${{ secrets.DB_SERVICE }}\" @/tmp/${{ env.QUERY_1 }}
+          " < ${{ env.QUERY_1 }}
+
+      - name: Run QUERY_2
+        env:
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.REMOTE_USER }}@${{ secrets.DB_HOST }} "
+            cat > /tmp/${{ env.QUERY_2 }}
+            export ORACLE_HOME=${{ env.ORACLE_HOME }}
+            ${{ env.ORACLE_HOME }}/bin/sqlplus -S \"$DB_USER/\\\"$DB_PASSWORD\\\"@${{ secrets.DB_SERVICE }}\" @/tmp/${{ env.QUERY_2 }}
+          " < ${{ env.QUERY_2 }}
+
+      - name: Send Success Notification
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "SUCCESS [${{ inputs.environment }}]: SQL Queries Execution"
+          body: "Queries executed successfully in ${{ inputs.environment }} environment.\nView run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          to: ahmad.zhariff@dhl.com
+          from: "GitHub Actions <noreply@github.com>"
+
+      - name: Send Failure Notification
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "FAILURE [${{ inputs.environment }}]: SQL Queries Execution"
+          body: "Query execution failed in ${{ inputs.environment }} environment.\nView run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          to: ahmad.zhariff@dhl.com
+          from: "GitHub Actions <noreply@github.com>"
